@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { 
   Calendar, Clock, Copy, Plus, Trash2, 
   PlayCircle, CheckCircle2, AlertTriangle, 
-  ExternalLink, ChevronDown, Video
+  ExternalLink, ChevronDown, Video, Download, Upload
 } from 'lucide-react';
 
 // --- Types ---
@@ -35,7 +35,7 @@ const PROMPT_TEXT = `あなたは医療系Web講演会の案内文から情報�
 [Site] (m3/CareNet/Nikkei/MedPeer/Other)
 [Title] (講演会のタイトル)
 [Date] YYYY/MM/DD HH:MM (※必ずJST時間表記)
-[URL] (URL)
+[URL] (URLがある場合のみ記載)
 `;
 
 export default function App() {
@@ -77,49 +77,87 @@ export default function App() {
   const handleParseText = () => {
     if (!rawText.trim()) return;
 
-    // Pattern matching [Site] ... [Title] ... [Date] ... [URL]
-    const pattern = /\[Site\]\s*(.*?)\s*\[Title\]\s*(.*?)\s*\[Date\]\s*(\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{1,2})\s*\[URL\]\s*(https?:\/\/[^\s]+)/gi;
+    // Pattern matching with high resilience.
+    const normalizedText = rawText.replace(/［/g, '[').replace(/］/g, ']');
+
+    // Split text into blocks by [Site], ensuring we handle multiple events.
+    const blocks = normalizedText.split(/(?=\[Site\])/i).filter(b => b.trim().length > 0);
     
-    let match;
+    // If no [Site] is found, the array will just have element(s) to process heuristically.
     const newEvents: WebinarEvent[] = [];
-    
-    while ((match = pattern.exec(rawText)) !== null) {
-      const site = match[1].trim();
-      const title = match[2].trim();
-      const jstDateStr = match[3].trim();
-      const url = match[4].trim();
 
-      // Convert JST to standard JS Date implicitly by specifying the timezone offset
-      // JST is UTC+9
-      // format: "2026/04/10 19:00" -> "2026-04-10T19:00:00+09:00"
-      const isoFormattedDate = jstDateStr.replace(/\//g, '-') + ':00+09:00';
-      const parsedDate = new Date(isoFormattedDate);
+    for (const block of blocks) {
+      const siteMatch = block.match(/\[Site\]([\s\S]*?)(?=\[Title\]|\[Date\]|\[URL\]|\[Site\]|$)/i);
+      const titleMatch = block.match(/\[Title\]([\s\S]*?)(?=\[Date\]|\[URL\]|\[Site\]|$)/i);
+      const dateMatch = block.match(/\[Date\]([\s\S]*?)(?=\[URL\]|\[Site\]|$)/i);
+      const urlMatch = block.match(/\[URL\]([\s\S]*?)(?=\[Site\]|$)/i);
 
-      if (isNaN(parsedDate.getTime())) {
-        continue;
+      let site = siteMatch ? siteMatch[1].trim() : '';
+      let title = titleMatch ? titleMatch[1].trim() : '';
+      let jstDateStrRaw = dateMatch ? dateMatch[1].trim() : '';
+      let url = urlMatch ? urlMatch[1].trim() : '';
+
+      // Redundancy: If the strict tags aren't explicitly used, try searching for any valid date.
+      if (!site && !title && !jstDateStrRaw) {
+         const fallbackDateMatch = block.match(/(\d{4}[\/\-年]\d{1,2}[\/\-月]\d{1,2}[日\s]*\d{1,2}:\d{1,2})/);
+         if (fallbackDateMatch) {
+           jstDateStrRaw = fallbackDateMatch[1];
+           // Heuristic: Extract nearest previous non-empty lines as title/site
+           const lines = block.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+           const dateLineIdx = lines.findIndex(l => l.includes(jstDateStrRaw));
+           if (dateLineIdx > 0) title = lines[dateLineIdx - 1];
+           if (dateLineIdx > 1) site = lines[dateLineIdx - 2];
+         }
       }
 
+      if (!site) site = '未分類 (Other)';
+      if (!title) title = 'タイトル未設定 (Untitled)';
+
+      // Extract parts of the date string
+      const extractDateMatch = jstDateStrRaw.match(/(\d{4})[\/\-年](\d{1,2})[\/\-月](\d{1,2})[日\s]*(\d{1,2}):(\d{1,2})/);
+      if (!extractDateMatch) continue; 
+      
+      const [_, year, month, day, hour, minute] = extractDateMatch;
+      const formattedMonth = month.padStart(2, '0');
+      const formattedDay = day.padStart(2, '0');
+      const formattedHour = hour.padStart(2, '0');
+      const formattedMinute = minute.padStart(2, '0');
+      
+      const jstDateStr = `${year}/${formattedMonth}/${formattedDay} ${formattedHour}:${formattedMinute}`;
+      const isoFormattedDate = `${year}-${formattedMonth}-${formattedDay}T${formattedHour}:${formattedMinute}:00+09:00`;
+      const parsedDate = new Date(isoFormattedDate);
+
+      // Verify the parsed date is structurally valid
+      if (isNaN(parsedDate.getTime())) continue;
+
+      let finalUrl = url;
+      if (url && !url.startsWith('http')) {
+        const fixedHttpMatch = url.match(/(https?:\/\/[^\s]+)/);
+        finalUrl = fixedHttpMatch ? fixedHttpMatch[1] : '';
+      }
+
+      // If no URL, use a deterministic combination of details as unique ID
+      const id = finalUrl || `id-${site}-${title}-${jstDateStr}`.replace(/\s+/g, '-');
+
       newEvents.push({
-        id: url, // using URL as unique ID to prevent duplicates
+        id,
         site,
         title,
         jstDateString: jstDateStr,
         timestampMs: parsedDate.getTime(),
-        url,
+        url: finalUrl,
         status: 'Scheduled'
       });
     }
 
     if (newEvents.length === 0) {
-      alert("No valid events found in the given format.");
+      alert("No valid events found. Please ensure texts include a valid date format (e.g. YYYY/MM/DD HH:MM).");
       return;
     }
 
     setEvents(prev => {
       const map = new Map<string, WebinarEvent>();
-      // old events first
       prev.forEach(e => map.set(e.id, e));
-      // new events override old ones for details, but keep status if it exists
       newEvents.forEach(ne => {
         if (map.has(ne.id)) {
           const existing = map.get(ne.id)!;
@@ -145,6 +183,59 @@ export default function App() {
       const isAncient = (now - e.timestampMs) > 1000 * 60 * 60 * 24;
       return !isAncient && e.status !== 'Completed';
     }));
+  };
+
+  const handleExportData = () => {
+    if (events.length === 0) {
+      alert('No events to export.');
+      return;
+    }
+    const dataStr = JSON.stringify(events, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `medwebinar_schedule_${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportData = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const importedData = JSON.parse(event.target?.result as string);
+        if (Array.isArray(importedData)) {
+          if (importedData.length === 0 || (importedData[0].id && importedData[0].timestampMs)) {
+            setEvents(prev => {
+              const map = new Map<string, WebinarEvent>();
+              prev.forEach(ev => map.set(ev.id, ev));
+              importedData.forEach((ne: WebinarEvent) => {
+                if (map.has(ne.id)) {
+                  const existing = map.get(ne.id)!;
+                  map.set(ne.id, { ...ne, status: existing.status });
+                } else {
+                  map.set(ne.id, ne);
+                }
+              });
+              return Array.from(map.values()).sort((a, b) => a.timestampMs - b.timestampMs);
+            });
+            alert('Successfully imported schedule data!');
+          } else {
+            alert('Invalid data format. Please select a valid MedWebinar exported JSON file.');
+          }
+        }
+      } catch (err) {
+        alert('Failed to parse file. Please select a valid JSON file.');
+      }
+      e.target.value = '';
+    };
+    reader.readAsText(file);
   };
 
   const copyPrompt = () => {
@@ -190,9 +281,18 @@ export default function App() {
                   <p className="text-rose-100 text-sm mt-1 whitespace-nowrap opacity-90">{alert.site}</p>
                 </div>
                 <a 
-                  href={alert.url} target="_blank" rel="noreferrer"
-                  className="px-4 py-2 bg-white text-rose-600 font-bold rounded-lg hover:bg-rose-50 transition-colors shadow-sm flex items-center gap-2"
-                  onClick={() => updateStatus(alert.id, 'Watching')}
+                  href={alert.url || '#'} 
+                  target={alert.url ? "_blank" : undefined} 
+                  rel={alert.url ? "noreferrer" : undefined}
+                  className="px-4 py-2 bg-white text-rose-600 font-bold rounded-lg hover:bg-rose-50 transition-colors shadow-sm flex items-center gap-2 disabled:opacity-50"
+                  onClick={(e) => {
+                    if (!alert.url) {
+                      e.preventDefault();
+                      window.alert('No URL available for this webinar.');
+                    } else {
+                      updateStatus(alert.id, 'Watching');
+                    }
+                  }}
                 >
                   <ExternalLink className="w-4 h-4" /> Watch Now
                 </a>
@@ -228,17 +328,30 @@ export default function App() {
 
         {/* Schedule List */}
         <section>
-          <div className="flex justify-between items-center mb-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
             <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
               <Calendar className="w-5 h-5 text-indigo-500" />
               Your Schedule
             </h2>
-            <button 
-              onClick={handleCleanup}
-              className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-rose-600 transition-colors font-medium px-3 py-1 hover:bg-rose-50 rounded-lg"
-            >
-              <Trash2 className="w-4 h-4" /> Cleanup Old/Completed
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-1.5 text-sm text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 transition-colors font-medium px-3 py-1.5 rounded-lg cursor-pointer shadow-sm">
+                <Upload className="w-4 h-4" /> Import Data
+                <input type="file" accept=".json" className="hidden" onChange={handleImportData} />
+              </label>
+              <button 
+                onClick={handleExportData}
+                className="flex items-center gap-1.5 text-sm text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 transition-colors font-medium px-3 py-1.5 rounded-lg shadow-sm"
+              >
+                <Download className="w-4 h-4" /> Export
+              </button>
+              <div className="w-px h-5 bg-slate-300 mx-1 hidden sm:block"></div>
+              <button 
+                onClick={handleCleanup}
+                className="flex items-center gap-1.5 text-sm text-rose-500 hover:text-rose-600 bg-rose-50 border border-rose-100 hover:bg-rose-100 transition-colors font-medium px-3 py-1.5 rounded-lg shadow-sm"
+              >
+                <Trash2 className="w-4 h-4" /> Cleanup Old
+              </button>
+            </div>
           </div>
 
           <div className="space-y-4">
@@ -303,15 +416,22 @@ export default function App() {
 
                       <div className="flex justify-end">
                         <a 
-                          href={event.url} 
-                          target="_blank" 
-                          rel="noreferrer"
-                          onClick={() => {
-                            if (event.status === 'Scheduled') updateStatus(event.id, 'Watching');
+                          href={event.url || '#'} 
+                          target={event.url ? "_blank" : undefined} 
+                          rel={event.url ? "noreferrer" : undefined}
+                          onClick={(e) => {
+                            if (!event.url) {
+                              e.preventDefault();
+                              alert('No URL available for this webinar.');
+                            } else if (event.status === 'Scheduled') {
+                              updateStatus(event.id, 'Watching');
+                            }
                           }}
                           className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold transition-all shadow-sm active:scale-95
                             ${event.status === 'Completed' 
                               ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200' 
+                              : (!event.url)
+                              ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
                               : 'bg-gradient-to-r from-indigo-50 to-violet-50 text-indigo-700 hover:from-indigo-100 hover:to-violet-100 border border-indigo-100 hover:border-indigo-200'
                             }`}
                         >
