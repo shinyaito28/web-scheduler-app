@@ -1,0 +1,332 @@
+import { useState, useEffect, useMemo } from 'react';
+import { 
+  Calendar, Clock, Copy, Plus, Trash2, 
+  PlayCircle, CheckCircle2, AlertTriangle, 
+  ExternalLink, ChevronDown, Video
+} from 'lucide-react';
+
+// --- Types ---
+type Status = 'Scheduled' | 'Watching' | 'Completed';
+
+interface WebinarEvent {
+  id: string; // url as unique identifier
+  site: string;
+  title: string;
+  jstDateString: string;
+  timestampMs: number; // For sorting and comparisons
+  url: string;
+  status: Status;
+}
+
+// --- Icons & Colors Helper ---
+const getSiteColor = (site: string) => {
+  const s = site.toLowerCase();
+  if (s.includes('m3')) return 'bg-rose-100 text-rose-700 border-rose-200';
+  if (s.includes('carenet')) return 'bg-blue-100 text-blue-700 border-blue-200';
+  if (s.includes('nikkei')) return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+  if (s.includes('medpeer')) return 'bg-cyan-100 text-cyan-700 border-cyan-200';
+  return 'bg-slate-100 text-slate-700 border-slate-200';
+};
+
+const PROMPT_TEXT = `あなたは医療系Web講演会の案内文から情報を正確に抽出する専門アシスタントです。
+ユーザーから乱雑なメール本文やメッセージが送られてきたら、そこから「サイト名」「タイトル」「日時」「URL」を抽出し、以下のフォーマットで出力してください。複数の場合は「---」で区別してください。
+
+【出力フォーマット】
+[Site] (m3/CareNet/Nikkei/MedPeer/Other)
+[Title] (講演会のタイトル)
+[Date] YYYY/MM/DD HH:MM (※必ずJST時間表記)
+[URL] (URL)
+`;
+
+export default function App() {
+  const [events, setEvents] = useState<WebinarEvent[]>(() => {
+    try {
+      const item = window.localStorage.getItem('webinar_events');
+      return item ? JSON.parse(item) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [rawText, setRawText] = useState('');
+  const [activeAlerts, setActiveAlerts] = useState<WebinarEvent[]>([]);
+
+  // Persist to localStorage
+  useEffect(() => {
+    window.localStorage.setItem('webinar_events', JSON.stringify(events));
+  }, [events]);
+
+  // Alert check interval
+  useEffect(() => {
+    const checkAlerts = () => {
+      const now = Date.now();
+      const nextAlerts = events.filter(e => {
+        if (e.status !== 'Scheduled') return false;
+        const diffMs = e.timestampMs - now;
+        const diffMin = diffMs / (1000 * 60);
+        // Alert if it's starting in exactly 0 to 5 minutes
+        return diffMin > 0 && diffMin <= 5;
+      });
+      setActiveAlerts(nextAlerts);
+    };
+    checkAlerts();
+    const interval = setInterval(checkAlerts, 60000); // Check every minute
+    return () => clearInterval(interval);
+  }, [events]);
+
+  const handleParseText = () => {
+    if (!rawText.trim()) return;
+
+    // Pattern matching [Site] ... [Title] ... [Date] ... [URL]
+    const pattern = /\[Site\]\s*(.*?)\s*\[Title\]\s*(.*?)\s*\[Date\]\s*(\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{1,2})\s*\[URL\]\s*(https?:\/\/[^\s]+)/gi;
+    
+    let match;
+    const newEvents: WebinarEvent[] = [];
+    
+    while ((match = pattern.exec(rawText)) !== null) {
+      const site = match[1].trim();
+      const title = match[2].trim();
+      const jstDateStr = match[3].trim();
+      const url = match[4].trim();
+
+      // Convert JST to standard JS Date implicitly by specifying the timezone offset
+      // JST is UTC+9
+      // format: "2026/04/10 19:00" -> "2026-04-10T19:00:00+09:00"
+      const isoFormattedDate = jstDateStr.replace(/\//g, '-') + ':00+09:00';
+      const parsedDate = new Date(isoFormattedDate);
+
+      if (isNaN(parsedDate.getTime())) {
+        continue;
+      }
+
+      newEvents.push({
+        id: url, // using URL as unique ID to prevent duplicates
+        site,
+        title,
+        jstDateString: jstDateStr,
+        timestampMs: parsedDate.getTime(),
+        url,
+        status: 'Scheduled'
+      });
+    }
+
+    if (newEvents.length === 0) {
+      alert("No valid events found in the given format.");
+      return;
+    }
+
+    setEvents(prev => {
+      const map = new Map<string, WebinarEvent>();
+      // old events first
+      prev.forEach(e => map.set(e.id, e));
+      // new events override old ones for details, but keep status if it exists
+      newEvents.forEach(ne => {
+        if (map.has(ne.id)) {
+          const existing = map.get(ne.id)!;
+          map.set(ne.id, { ...ne, status: existing.status });
+        } else {
+          map.set(ne.id, ne);
+        }
+      });
+      return Array.from(map.values()).sort((a, b) => a.timestampMs - b.timestampMs);
+    });
+
+    setRawText('');
+  };
+
+  const updateStatus = (id: string, status: Status) => {
+    setEvents(prev => prev.map(e => e.id === id ? { ...e, status } : e));
+  };
+
+  const handleCleanup = () => {
+    const now = Date.now();
+    // Remove completed events OR events that happened more than 24 hours ago
+    setEvents(prev => prev.filter(e => {
+      const isAncient = (now - e.timestampMs) > 1000 * 60 * 60 * 24;
+      return !isAncient && e.status !== 'Completed';
+    }));
+  };
+
+  const copyPrompt = () => {
+    navigator.clipboard.writeText(PROMPT_TEXT);
+    alert('Copied AI Formatter Prompt to clipboard!');
+  };
+
+  const sortedEvents = useMemo(() => {
+    return [...events].sort((a, b) => a.timestampMs - b.timestampMs);
+  }, [events]);
+
+  return (
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 pb-20">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg sticky top-0 z-50">
+        <div className="max-w-4xl mx-auto px-4 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
+          <div className="flex items-center gap-2">
+            <Video className="w-6 h-6 text-indigo-100" />
+            <h1 className="text-xl font-bold tracking-tight">MedWebinar Scheduler</h1>
+          </div>
+          <button 
+            onClick={copyPrompt}
+            className="flex items-center gap-2 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-full text-sm font-medium transition-colors border border-white/10 shadow-sm backdrop-blur-md"
+          >
+            <Copy className="w-4 h-4" />
+            Copy AI Prompt
+          </button>
+        </div>
+      </div>
+
+      <main className="max-w-4xl mx-auto px-4 py-8">
+        
+        {/* Alerts Section (If any) */}
+        {activeAlerts.length > 0 && (
+          <div className="mb-8 space-y-3 animation-fade-in">
+            <h2 className="text-sm font-semibold text-rose-500 uppercase tracking-widest flex items-center gap-2 mb-3">
+              <AlertTriangle className="w-4 h-4"/> Starting Soon
+            </h2>
+            {activeAlerts.map(alert => (
+              <div key={"alert-"+alert.id} className="bg-rose-500 rounded-xl p-4 flex items-center justify-between shadow-lg shadow-rose-500/20 text-white">
+                <div>
+                  <h3 className="font-bold">{alert.title}</h3>
+                  <p className="text-rose-100 text-sm mt-1 whitespace-nowrap opacity-90">{alert.site}</p>
+                </div>
+                <a 
+                  href={alert.url} target="_blank" rel="noreferrer"
+                  className="px-4 py-2 bg-white text-rose-600 font-bold rounded-lg hover:bg-rose-50 transition-colors shadow-sm flex items-center gap-2"
+                  onClick={() => updateStatus(alert.id, 'Watching')}
+                >
+                  <ExternalLink className="w-4 h-4" /> Watch Now
+                </a>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Input Section */}
+        <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 mb-8 mt-4 transform transition-all hover:shadow-md">
+          <div className="flex justify-between items-end mb-4">
+            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+              <Plus className="w-5 h-5 text-indigo-500" />
+              Import Webinars
+            </h2>
+          </div>
+          <textarea
+            value={rawText}
+            onChange={(e) => setRawText(e.target.value)}
+            className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-sm font-mono resize-y"
+            placeholder="[Site] m3 [Title] 高血圧の最新知見 [Date] 2026/04/10 19:00 [URL] https://..."
+          />
+          <div className="mt-4 flex justify-end">
+            <button 
+              onClick={handleParseText}
+              disabled={!rawText.trim()}
+              className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl font-medium transition-all shadow-sm shadow-indigo-200 text-sm flex items-center gap-2"
+            >
+              Parse and Add
+            </button>
+          </div>
+        </section>
+
+        {/* Schedule List */}
+        <section>
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-indigo-500" />
+              Your Schedule
+            </h2>
+            <button 
+              onClick={handleCleanup}
+              className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-rose-600 transition-colors font-medium px-3 py-1 hover:bg-rose-50 rounded-lg"
+            >
+              <Trash2 className="w-4 h-4" /> Cleanup Old/Completed
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            {sortedEvents.length === 0 ? (
+              <div className="text-center py-12 px-4 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 font-medium">
+                No webinars scheduled. Paste your AI output above to get started.
+              </div>
+            ) : (
+              sortedEvents.map(event => {
+                const localDate = new Date(event.timestampMs);
+                const isPast = Date.now() > event.timestampMs;
+
+                return (
+                  <div 
+                    key={event.id}
+                    className={`group bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition-all duration-200 flex flex-col md:flex-row ${event.status === 'Completed' ? 'opacity-60 saturate-50' : ''}`}
+                  >
+                    {/* Time Pillar */}
+                    <div className="md:w-48 bg-slate-50 p-4 border-b md:border-b-0 md:border-r border-slate-200 flex flex-col justify-center shrink-0">
+                      <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5" /> Local Time
+                      </div>
+                      <div className={`font-bold text-lg ${isPast && event.status === 'Scheduled' ? 'text-rose-500' : 'text-slate-800'}`}>
+                        {localDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric'})}
+                      </div>
+                      <div className={`text-xl tracking-tight font-black ${isPast && event.status === 'Scheduled' ? 'text-rose-600' : 'text-indigo-600'}`}>
+                        {localDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-2">
+                        (Orig: JST {event.jstDateString})
+                      </div>
+                    </div>
+
+                    {/* Content Section */}
+                    <div className="p-4 flex-1 flex flex-col justify-between gap-4">
+                      <div>
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          <span className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] font-bold tracking-wide border ${getSiteColor(event.site)}`}>
+                            {event.site.toUpperCase()}
+                          </span>
+                          <div className="relative inline-block text-left group">
+                            <select 
+                              value={event.status}
+                              onChange={(e) => updateStatus(event.id, e.target.value as Status)}
+                              className={`appearance-none text-xs font-medium pl-3 pr-8 py-1 rounded-full border cursor-pointer hover:opacity-80 transition-opacity focus:outline-none focus:ring-2 focus:ring-indigo-500/50
+                                ${event.status === 'Scheduled' ? 'bg-slate-100 text-slate-700 border-slate-200' : ''}
+                                ${event.status === 'Watching' ? 'bg-emerald-500 text-white border-emerald-600' : ''}
+                                ${event.status === 'Completed' ? 'bg-slate-700 text-white border-slate-800' : ''}
+                              `}
+                            >
+                              <option value="Scheduled">🗓 Scheduled</option>
+                              <option value="Watching">▶️ Watching</option>
+                              <option value="Completed">✅ Completed</option>
+                            </select>
+                            <ChevronDown className={`w-3 h-3 absolute right-2.5 top-[7px] pointer-events-none ${event.status !== 'Scheduled' ? 'text-white/70' : 'text-slate-400'}`}/>
+                          </div>
+                        </div>
+                        <h3 className="font-bold text-slate-800 line-clamp-2 leading-snug mt-2">
+                          {event.title}
+                        </h3>
+                      </div>
+
+                      <div className="flex justify-end">
+                        <a 
+                          href={event.url} 
+                          target="_blank" 
+                          rel="noreferrer"
+                          onClick={() => {
+                            if (event.status === 'Scheduled') updateStatus(event.id, 'Watching');
+                          }}
+                          className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold transition-all shadow-sm active:scale-95
+                            ${event.status === 'Completed' 
+                              ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200' 
+                              : 'bg-gradient-to-r from-indigo-50 to-violet-50 text-indigo-700 hover:from-indigo-100 hover:to-violet-100 border border-indigo-100 hover:border-indigo-200'
+                            }`}
+                        >
+                          {event.status === 'Completed' ? <CheckCircle2 className="w-4 h-4"/> : <PlayCircle className="w-4 h-4" />}
+                          Open Webinar
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}

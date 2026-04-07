@@ -1,0 +1,40 @@
+src/App.tsx(160,5): error TS2657: JSX expressions must have one parent element.
+src/App.tsx(178,8): error TS17008: JSX element 'main' has no corresponding closing tag.
+src/App.tsx(257,32): error TS1127: Invalid character.
+src/App.tsx(257,247): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/App.tsx(258,19): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/App.tsx(264,39): error TS1127: Invalid character.
+src/App.tsx(264,140): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/App.tsx(264,141): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/App.tsx(267,39): error TS1127: Invalid character.
+src/App.tsx(267,157): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/App.tsx(267,158): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/App.tsx(273,23): error TS17002: Expected corresponding JSX closing tag for 'section'.
+src/App.tsx(279,44): error TS1127: Invalid character.
+src/App.tsx(279,157): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/App.tsx(279,158): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/App.tsx(281,29): error TS17002: Expected corresponding JSX closing tag for 'div'.
+src/App.tsx(286,42): error TS1127: Invalid character.
+src/App.tsx(290,33): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/App.tsx(291,29): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/App.tsx(295,31): error TS17002: Expected corresponding JSX closing tag for 'div'.
+src/App.tsx(296,53): error TS1127: Invalid character.
+src/App.tsx(296,183): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/App.tsx(296,185): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/App.tsx(312,38): error TS1127: Invalid character.
+src/App.tsx(316,32): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/App.tsx(317,25): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/App.tsx(320,27): error TS17002: Expected corresponding JSX closing tag for 'div'.
+src/App.tsx(321,23): error TS1005: ')' expected.
+src/App.tsx(322,21): error TS1109: Expression expected.
+src/App.tsx(323,19): error TS1109: Expression expected.
+src/App.tsx(324,17): error TS1109: Expression expected.
+src/App.tsx(325,16): error TS1128: Declaration or statement expected.
+src/App.tsx(326,13): error TS1128: Declaration or statement expected.
+src/App.tsx(326,14): error TS1128: Declaration or statement expected.
+src/App.tsx(327,11): error TS1128: Declaration or statement expected.
+src/App.tsx(328,9): error TS1109: Expression expected.
+src/App.tsx(329,7): error TS1109: Expression expected.
+src/App.tsx(330,5): error TS1109: Expression expected.
+src/App.tsx(331,3): error TS1109: Expression expected.
+src/App.tsx(332,1): error TS1128: Declaration or statement expected.
