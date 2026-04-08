@@ -28,6 +28,15 @@ const getSiteColor = (site: string) => {
   return 'bg-slate-100 text-slate-700 border-slate-200';
 };
 
+const getSiteFallbackUrl = (site: string) => {
+  const s = site.toLowerCase();
+  if (s.includes('m3')) return 'https://www.m3.com/';
+  if (s.includes('carenet')) return 'https://www.carenet.com/';
+  if (s.includes('nikkei')) return 'https://medical.nikkeibp.co.jp/';
+  if (s.includes('medpeer')) return 'https://medpeer.jp/';
+  return '';
+};
+
 const PROMPT_TEXT = `あなたは医療系Web講演会の案内文から情報を正確に抽出する専門アシスタントです。
 ユーザーから乱雑なメール本文やメッセージが送られてきたら、そこから「サイト名」「タイトル」「日時」「URL」を抽出し、以下のフォーマットで出力してください。複数の場合は「---」で区別してください。
 
@@ -50,6 +59,7 @@ export default function App() {
 
   const [rawText, setRawText] = useState('');
   const [activeAlerts, setActiveAlerts] = useState<WebinarEvent[]>([]);
+  const [selectedEventIds, setSelectedEventIds] = useState<Set<string>>(new Set());
 
   // Persist to localStorage
   useEffect(() => {
@@ -185,6 +195,22 @@ export default function App() {
     }));
   };
 
+  const handleDeleteSelected = () => {
+    if (selectedEventIds.size === 0) return;
+    if (!window.confirm(`Are you sure you want to delete ${selectedEventIds.size} selected event(s)?`)) return;
+    setEvents(prev => prev.filter(e => !selectedEventIds.has(e.id)));
+    setSelectedEventIds(new Set());
+  };
+
+  const toggleSelection = (id: string) => {
+    setSelectedEventIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const handleExportData = () => {
     if (events.length === 0) {
       alert('No events to export.');
@@ -280,22 +306,27 @@ export default function App() {
                   <h3 className="font-bold">{alert.title}</h3>
                   <p className="text-rose-100 text-sm mt-1 whitespace-nowrap opacity-90">{alert.site}</p>
                 </div>
-                <a 
-                  href={alert.url || '#'} 
-                  target={alert.url ? "_blank" : undefined} 
-                  rel={alert.url ? "noreferrer" : undefined}
-                  className="px-4 py-2 bg-white text-rose-600 font-bold rounded-lg hover:bg-rose-50 transition-colors shadow-sm flex items-center gap-2 disabled:opacity-50"
-                  onClick={(e) => {
-                    if (!alert.url) {
-                      e.preventDefault();
-                      window.alert('No URL available for this webinar.');
-                    } else {
-                      updateStatus(alert.id, 'Watching');
-                    }
-                  }}
-                >
-                  <ExternalLink className="w-4 h-4" /> Watch Now
-                </a>
+                {(() => {
+                  const alertUrl = alert.url || getSiteFallbackUrl(alert.site);
+                  return (
+                    <a 
+                      href={alertUrl || '#'} 
+                      target={alertUrl ? "_blank" : undefined} 
+                      rel={alertUrl ? "noreferrer" : undefined}
+                      className="px-4 py-2 bg-white text-rose-600 font-bold rounded-lg hover:bg-rose-50 transition-colors shadow-sm flex items-center gap-2 disabled:opacity-50"
+                      onClick={(e) => {
+                        if (!alertUrl) {
+                          e.preventDefault();
+                          window.alert('No URL available for this webinar.');
+                        } else {
+                          updateStatus(alert.id, 'Watching');
+                        }
+                      }}
+                    >
+                      <ExternalLink className="w-4 h-4" /> Watch Now
+                    </a>
+                  );
+                })()}
               </div>
             ))}
           </div>
@@ -345,12 +376,21 @@ export default function App() {
                 <Download className="w-4 h-4" /> Export
               </button>
               <div className="w-px h-5 bg-slate-300 mx-1 hidden sm:block"></div>
-              <button 
-                onClick={handleCleanup}
-                className="flex items-center gap-1.5 text-sm text-rose-500 hover:text-rose-600 bg-rose-50 border border-rose-100 hover:bg-rose-100 transition-colors font-medium px-3 py-1.5 rounded-lg shadow-sm"
-              >
-                <Trash2 className="w-4 h-4" /> Cleanup Old
-              </button>
+              {selectedEventIds.size > 0 ? (
+                <button 
+                  onClick={handleDeleteSelected}
+                  className="flex items-center gap-1.5 text-sm text-white bg-rose-500 hover:bg-rose-600 transition-colors font-medium px-3 py-1.5 rounded-lg shadow-sm"
+                >
+                  <Trash2 className="w-4 h-4" /> Delete ({selectedEventIds.size})
+                </button>
+              ) : (
+                <button 
+                  onClick={handleCleanup}
+                  className="flex items-center gap-1.5 text-sm text-rose-500 hover:text-rose-600 bg-rose-50 border border-rose-100 hover:bg-rose-100 transition-colors font-medium px-3 py-1.5 rounded-lg shadow-sm"
+                >
+                  <Trash2 className="w-4 h-4" /> Cleanup Old
+                </button>
+              )}
             </div>
           </div>
 
@@ -367,10 +407,12 @@ export default function App() {
                 return (
                   <div 
                     key={event.id}
-                    className={`group bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition-all duration-200 flex flex-col md:flex-row ${event.status === 'Completed' ? 'opacity-60 saturate-50' : ''}`}
+                    className={`group rounded-2xl border overflow-hidden shadow-sm hover:shadow-md transition-all duration-200 flex flex-col md:flex-row 
+                      ${event.status === 'Completed' ? 'opacity-60 saturate-50' : ''} 
+                      ${selectedEventIds.has(event.id) ? 'border-indigo-400 bg-indigo-50/40' : 'bg-white border-slate-200'}`}
                   >
                     {/* Time Pillar */}
-                    <div className="md:w-48 bg-slate-50 p-4 border-b md:border-b-0 md:border-r border-slate-200 flex flex-col justify-center shrink-0">
+                    <div className="md:w-48 bg-slate-50/70 p-4 border-b md:border-b-0 md:border-r border-slate-200/70 flex flex-col justify-center shrink-0">
                       <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1.5">
                         <Clock className="w-3.5 h-3.5" /> Local Time
                       </div>
@@ -389,9 +431,17 @@ export default function App() {
                     <div className="p-4 flex-1 flex flex-col justify-between gap-4">
                       <div>
                         <div className="flex items-start justify-between gap-2 mb-1">
-                          <span className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] font-bold tracking-wide border ${getSiteColor(event.site)}`}>
-                            {event.site.toUpperCase()}
-                          </span>
+                          <div className="flex items-center gap-3">
+                            <input 
+                              type="checkbox" 
+                              checked={selectedEventIds.has(event.id)}
+                              onChange={() => toggleSelection(event.id)}
+                              className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer shadow-sm"
+                            />
+                            <span className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] font-bold tracking-wide border ${getSiteColor(event.site)}`}>
+                              {event.site.toUpperCase()}
+                            </span>
+                          </div>
                           <div className="relative inline-block text-left group">
                             <select 
                               value={event.status}
@@ -415,29 +465,34 @@ export default function App() {
                       </div>
 
                       <div className="flex justify-end">
-                        <a 
-                          href={event.url || '#'} 
-                          target={event.url ? "_blank" : undefined} 
-                          rel={event.url ? "noreferrer" : undefined}
-                          onClick={(e) => {
-                            if (!event.url) {
-                              e.preventDefault();
-                              alert('No URL available for this webinar.');
-                            } else if (event.status === 'Scheduled') {
-                              updateStatus(event.id, 'Watching');
-                            }
-                          }}
-                          className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold transition-all shadow-sm active:scale-95
-                            ${event.status === 'Completed' 
-                              ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200' 
-                              : (!event.url)
-                              ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
-                              : 'bg-gradient-to-r from-indigo-50 to-violet-50 text-indigo-700 hover:from-indigo-100 hover:to-violet-100 border border-indigo-100 hover:border-indigo-200'
-                            }`}
-                        >
-                          {event.status === 'Completed' ? <CheckCircle2 className="w-4 h-4"/> : <PlayCircle className="w-4 h-4" />}
-                          Open Webinar
-                        </a>
+                        {(() => {
+                          const targetUrl = event.url || getSiteFallbackUrl(event.site);
+                          return (
+                            <a 
+                              href={targetUrl || '#'} 
+                              target={targetUrl ? "_blank" : undefined} 
+                              rel={targetUrl ? "noreferrer" : undefined}
+                              onClick={(e) => {
+                                if (!targetUrl) {
+                                  e.preventDefault();
+                                  alert('No URL available for this webinar.');
+                                } else if (event.status === 'Scheduled') {
+                                  updateStatus(event.id, 'Watching');
+                                }
+                              }}
+                              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold transition-all shadow-sm active:scale-95
+                                ${event.status === 'Completed' 
+                                  ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200' 
+                                  : (!targetUrl)
+                                  ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                                  : 'bg-gradient-to-r from-indigo-50 to-violet-50 text-indigo-700 hover:from-indigo-100 hover:to-violet-100 border border-indigo-100 hover:border-indigo-200'
+                                }`}
+                            >
+                              {event.status === 'Completed' ? <CheckCircle2 className="w-4 h-4"/> : <PlayCircle className="w-4 h-4" />}
+                              Open Webinar
+                            </a>
+                          );
+                        })()}
                       </div>
                     </div>
                   </div>
